@@ -43,4 +43,6 @@ loki_data/
 
 # Temporary files
 tmp/
-temp/ 
+temp/
+.data
+data/

@@ -5,7 +5,7 @@ networks:
 services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest   # ≈ 50 MB
-    container_name: otel-collector
+    container_name: skill-otel-collector
     command: ["--config=/etc/otel/collector-config.yaml"]
     volumes:
       - ./collector-config.yaml:/etc/otel/collector-config.yaml:ro
@@ -19,7 +19,7 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
-    container_name: prometheus
+    container_name: skill-prometheus
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
@@ -31,7 +31,9 @@ services:
 
   loki:
     image: grafana/loki:latest
-    container_name: loki
+    container_name: skill-loki
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -41,7 +43,7 @@ services:
 
   grafana:
     image: grafana/grafana-oss:latest
-    container_name: grafana
+    container_name: skill-grafana
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
@@ -50,9 +52,31 @@ services:
       - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - ./claude-code-dashboard.json:/var/lib/grafana/dashboards/claude-code-dashboard.json:ro
+      - ./skill-usage-dashboard.json:/var/lib/grafana/dashboards/skill-usage-dashboard.json:ro
     ports:
-      - "3000:3000"
+      - "13737:3000"
     restart: unless-stopped
     depends_on: [prometheus, loki]
     networks:
-      - otel-network 
+      - otel-network
+
+  codex-skill-bridge:
+    image: node:22-alpine
+    container_name: codex-skill-bridge
+    command: ["node", "/app/codex-skill-bridge.mjs"]
+    environment:
+      LOKI_PUSH_ENDPOINT: "http://loki:3100/loki/api/v1/push"
+      CODEX_HISTORY_PATH: "/codex/history.jsonl"
+      CLAUDE_PROJECTS_PATH: "/claude/projects"
+      CODEX_BRIDGE_STATE_PATH: "/data/codex-skill-bridge-state.json"
+      CODEX_BRIDGE_POLL_INTERVAL_MS: "5000"
+      CODEX_BRIDGE_HISTORY_WINDOW_DAYS: "30"
+    volumes:
+      - ./scripts/codex-skill-bridge.mjs:/app/codex-skill-bridge.mjs:ro
+      - /home/admin/.codex/history.jsonl:/codex/history.jsonl:ro
+      - /home/admin/.claude/projects:/claude/projects:ro
+      - ./data:/data
+    restart: unless-stopped
+    depends_on: [loki]
+    networks:
+      - otel-network

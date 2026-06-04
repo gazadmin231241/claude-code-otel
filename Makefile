@@ -12,7 +12,7 @@ up: ## Start the observability stack
 	@echo "🚀 Starting Claude Code observability stack..."
 	docker compose up -d
 	@echo "✅ Stack started!"
-	@echo "📊 Grafana: http://localhost:3000 (admin/admin)"
+	@echo "📊 Grafana: http://localhost:13737 (admin/admin)"
 	@echo "🔍 Prometheus: http://localhost:9090"
 	@echo "📄 Loki: http://localhost:3100"
 
@@ -67,7 +67,7 @@ status: ## Show stack status
 	@docker compose ps
 	@echo ""
 	@echo "🌐 Service URLs:"
-	@echo "  Grafana:      http://localhost:3000"
+	@echo "  Grafana:      http://localhost:13737"
 	@echo "  Prometheus:   http://localhost:9090"
 	@echo "  Loki:         http://localhost:3100"
 
@@ -94,4 +94,4 @@ setup-claude: ## Display Claude Code telemetry setup instructions
 demo-metrics: ## Generate demo metrics for testing
 	@echo "🎯 This would generate demo metrics if Claude Code was running"
 	@echo "💡 To see real metrics, ensure Claude Code is configured with telemetry enabled"
-	@echo "📖 Run 'make setup-claude' for setup instructions" 
+	@echo "📖 Run 'make setup-claude' for setup instructions"
