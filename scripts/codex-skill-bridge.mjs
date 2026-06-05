@@ -34,15 +34,62 @@ function normalizeSkillName(name) {
     .pop()
 }
 
+/**
+ * Skill names that look like shell/NGINX/template variables but are real skills.
+ * Kept short — only names that appear as $name in Codex transcripts without
+ * a SKILL.md link and are confirmed real skill invocations.
+ */
+const KNOWN_SKILL_NAMES = new Set([
+  "create-plan", "development-flow-run", "skill-creator", "skill-installer",
+  "grace-execute", "personal-message-style", "task-pipeline-review",
+  "commit", "review", "verify", "simplify", "run", "init", "loop",
+  "deep-research", "claude-api", "code-review", "security-review",
+  "fewer-permission-prompts", "update-config", "keybindings-help", "omarchy",
+])
+
+/**
+ * Heuristic: reject $-prefixed tokens that are clearly NOT skill names.
+ * Skill names are lowercase, hyphenated, and don't contain path separators,
+ * shell special chars, or common variable patterns.
+ */
+function looksLikeSkillName(name) {
+  if (!name) return false
+  // Already stripped the leading $ by this point
+  // Reject if it looks like a shell/NGINX/template variable
+  if (/[/{}\\$]/.test(name)) return false          // path chars or nested vars
+  if (/[A-Z]{2,}/.test(name)) return false          // ALLCAPS like ENV, NF, PID
+  if (/^\d+$/.test(name)) return false              // pure number like $1, $2
+  if (/^[A-Z]$/) return false   // single uppercase like $N
+  if (name.length > 60) return false                // unreasonably long
+  // Must contain at least one letter
+  if (!/[a-z]/i.test(name)) return false
+  // If it's in the known list, always accept
+  if (KNOWN_SKILL_NAMES.has(name)) return true
+  // Otherwise, require lowercase + hyphens/underscores/colons pattern (typical skill names)
+  // Colons appear in namespaced skills like "superpowers:executing-plans"
+  return /^[a-z][a-z0-9:_-]*$/.test(name)
+}
+
 function skillNamesFromText(text) {
   if (!text || typeof text !== "string") return []
 
   const names = new Set()
+  // Pattern 1: Markdown links to SKILL.md — [$name](path/SKILL.md)
   for (const match of text.matchAll(/\[\$?([^\]\s()]+)\]\(([^)]*\/SKILL\.md)\)/g)) {
     names.add(normalizeSkillName(match[1] || match[2]))
   }
+  // Pattern 2: "Using `skill-name`" / "Использую `skill-name`" text markers
   for (const match of text.matchAll(/(?:Using|Использую)\s+`([^`]+)`/g)) {
     names.add(normalizeSkillName(match[1]))
+  }
+  // Pattern 3: Standalone $skill-name invocations (no SKILL.md link)
+  // These appear in Codex transcripts as "$skill-name" without a surrounding
+  // markdown link — e.g. "$review", "$create-plan", "$commit".
+  for (const match of text.matchAll(/\$([a-zA-Z][a-zA-Z0-9:_-]+)/g)) {
+    const candidate = match[1].toLowerCase()
+    if (looksLikeSkillName(candidate)) {
+      names.add(normalizeSkillName(candidate))
+    }
   }
   return Array.from(names).filter(Boolean)
 }
@@ -74,23 +121,57 @@ function parseCodexRecords(chunk) {
 
 function parseClaudeRecords(chunk) {
   const records = []
+  const seen = new Set()
   const oldestAcceptedMs = Date.now() - historyWindowDays * 24 * 60 * 60 * 1000
   for (const line of chunk.split(/\r?\n/)) {
     if (!line.trim()) continue
     try {
       const entry = JSON.parse(line)
-      const skillName = normalizeSkillName(entry.attributionSkill)
-      if (!skillName) continue
-      const entryMs = Date.parse(entry.timestamp || "")
-      if (!Number.isFinite(entryMs) || entryMs < oldestAcceptedMs) continue
-      const ingestMs = Date.now() + records.length
-      records.push({
-        agent: "claude",
-        eventName: "skill_activated",
-        sessionId: String(entry.sessionId || entry.parentUuid || "unknown"),
-        skillName,
-        timeUnixNano: String(ingestMs * 1e6),
-      })
+
+      // --- Source A: attributionSkill on assistant turns ---
+      const attrSkill = normalizeSkillName(entry.attributionSkill)
+      if (attrSkill) {
+        const entryMs = Date.parse(entry.timestamp || "")
+        if (Number.isFinite(entryMs) && entryMs >= oldestAcceptedMs) {
+          const dedupeKey = `attr:${entry.sessionId || entry.parentUuid || "unknown"}:${attrSkill}:${entryMs}`
+          if (!seen.has(dedupeKey)) {
+            seen.add(dedupeKey)
+            records.push({
+              agent: "claude",
+              eventName: "skill_activated",
+              sessionId: String(entry.sessionId || entry.parentUuid || "unknown"),
+              skillName: attrSkill,
+              timeUnixNano: String(entryMs * 1e6),
+            })
+          }
+        }
+      }
+
+      // --- Source B: Skill tool_use invocations (the trigger event) ---
+      // Claude Code emits {"type":"tool_use", "name":"Skill", "input":{"skill":"review", ...}}
+      // This captures the actual moment a skill was invoked, not just attributed output.
+      if (entry.message?.content && Array.isArray(entry.message.content)) {
+        for (const block of entry.message.content) {
+          if (block?.type === "tool_use" && block?.name === "Skill" && block?.input?.skill) {
+            const skillName = normalizeSkillName(block.input.skill)
+            if (!skillName) continue
+            const entryMs = Date.parse(entry.timestamp || "")
+            const ts = Number.isFinite(entryMs) ? entryMs : Date.now()
+            if (ts < oldestAcceptedMs) continue
+            const dedupeKey = `tool:${entry.sessionId || entry.parentUuid || "unknown"}:${skillName}:${ts}`
+            if (!seen.has(dedupeKey)) {
+              seen.add(dedupeKey)
+              records.push({
+                agent: "claude",
+                eventName: "skill_invoked",
+                sessionId: String(entry.sessionId || entry.parentUuid || "unknown"),
+                skillName,
+                timeUnixNano: String(ts * 1e6),
+              })
+            }
+          }
+        }
+      }
     } catch {
       // Ignore partial lines and non-JSON rows.
     }

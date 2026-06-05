@@ -64,7 +64,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "topk(25, sum by (agent, skill_name) (count_over_time({event_name=\"skill_activated\"}[$__range])))",
+          "expr": "topk(25, sum by (agent, skill_name) (count_over_time({event_name=~\"skill_activated|skill_invoked\"}[$__range])))",
           "refId": "A"
         }
       ],
@@ -113,7 +113,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "sum by (agent, skill_name) (count_over_time({event_name=\"skill_activated\"}[$__interval]))",
+          "expr": "sum by (agent, skill_name) (count_over_time({event_name=~\"skill_activated|skill_invoked\"}[$__interval]))",
           "refId": "A"
         }
       ],
@@ -125,18 +125,67 @@
         "type": "loki",
         "uid": "loki"
       },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 4,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (event_name) (count_over_time({event_name=~\"skill_activated|skill_invoked\"}[$__interval]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Skill Events by Type",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
       "gridPos": {
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 18
       },
       "id": 3,
       "options": {
         "dedupStrategy": "none",
         "enableLogDetails": true,
         "prettifyLogMessage": false,
-        "showCommonLabels": false,
+        "showCommonLabels": true,
         "showLabels": true,
         "showTime": true,
         "sortOrder": "Descending",
@@ -148,11 +197,11 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{event_name=\"skill_activated\"}",
+          "expr": "{event_name=~\"skill_activated|skill_invoked\"}",
           "refId": "A"
         }
       ],
-      "title": "Skill Activation Events",
+      "title": "Skill Events Log",
       "type": "logs"
     }
   ],
