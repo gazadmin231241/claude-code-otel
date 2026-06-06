@@ -16,7 +16,7 @@ test("Agent Skill Usage Top Skills ranks skills by usage for the selected range"
   assert.ok(topSkills, "Top Skills panel should exist");
   assert.equal(topSkills.targets[0].queryType, "instant");
   assert.equal(topSkills.targets[0].legendFormat, "{{skill_name}}");
-  assert.match(query, /topk\(25,/);
+  assert.match(query, /^sort_desc\(topk\(25,/);
   assert.match(query, /sum by \(skill_name\)/);
   assert.match(query, /\[\$__range\]/);
   assert.doesNotMatch(query, /sum by \(agent, skill_name\)/);
