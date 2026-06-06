@@ -64,8 +64,44 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "topk(25, sum by (agent, skill_name) (count_over_time({event_name=~\"skill_activated|skill_invoked\"}[$__range])))",
+          "expr": "topk(25, sum by (skill_name) (count_over_time({event_name=~\"skill_activated|skill_invoked\"}[$__range])))",
+          "legendFormat": "{{skill_name}}",
           "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "skill_name": 0,
+              "Value": 1
+            },
+            "renameByName": {
+              "skill_name": "Skill",
+              "Value": "Uses"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "desc": true,
+                "field": "Uses"
+              }
+            ]
+          }
         }
       ],
       "title": "Top Skills",
