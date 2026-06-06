@@ -66,6 +66,7 @@
           },
           "expr": "topk(25, sum by (skill_name) (count_over_time({event_name=~\"skill_activated|skill_invoked\"}[$__range])))",
           "legendFormat": "{{skill_name}}",
+          "queryType": "instant",
           "refId": "A"
         }
       ],
