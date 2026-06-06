@@ -134,6 +134,7 @@ Codex usage is collected separately because Codex local sessions do not emit the
 
 Access comprehensive analytics through the Grafana dashboard at http://localhost:3000:
 
+- **AI Code Observability**: Unified overview for Claude Code, Codex, skill usage, and logs
 - **Cost Analysis**: Real-time cost tracking with model breakdowns
 - **Request Monitoring**: API request counts and patterns by model
 - **Token Efficiency**: Track token usage and cost-per-token metrics
@@ -169,6 +170,11 @@ Access comprehensive analytics through the Grafana dashboard at http://localhost
 ## 📋 Dashboard Sections
 
 The Grafana dashboard is organized into sections reflecting the observability documentation recommendations:
+
+### AI Code Observability
+- Unified first-stop dashboard for Claude Code and Codex activity
+- Claude token/cost trends next to Codex token windows and rate-limit usage
+- Shared skill usage tables, skill timelines, and combined skill event logs
 
 ### 📊 Overview
 - Active sessions, cost, token usage, lines of code changed
