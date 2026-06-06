@@ -60,6 +60,7 @@ Claude Code → OpenTelemetry Collector → Prometheus (metrics) + Loki (events/
 | **Prometheus** | Metrics storage & querying | 9090 | http://localhost:9090 |
 | **Loki** | Log aggregation & storage | 3100 | - |
 | **Grafana** | Dashboards & visualization | 3000 | http://localhost:3000 |
+| **Codex Skill Bridge** | Codex session usage and skill event ingestion | 9464 | http://localhost:9464/metrics |
 
 ## 🚀 Quick Start
 
@@ -116,6 +117,16 @@ Based on the [Claude Code Observability Documentation](CLAUDE_OBSERVABILITY.md),
 - `claude_code.api_request` - API requests with duration and tokens
 - `claude_code.api_error` - API errors with status codes
 - `claude_code.tool_decision` - Tool permission decisions
+
+### Codex Metrics
+Codex usage is collected separately because Codex local sessions do not emit the same `claude_code.*` OpenTelemetry metrics. The `codex-skill-bridge` service reads `/home/admin/.codex/history.jsonl` and `/home/admin/.codex/sessions` and exports:
+
+- `codex_token_usage_tokens_total` - all-time Codex token usage by token type
+- `codex_token_usage_window_tokens` - rolling token totals for 5h, 24h, 7d, and 30d windows
+- `codex_rate_limit_used_percent` - latest primary and weekly limit percentages
+- `codex_rate_limit_resets_at_seconds` - latest primary and weekly reset timestamps
+- `codex_sessions_total`, `codex_token_events_total`, `codex_last_activity_timestamp_seconds` - parser health and freshness
+- Loki skill events with `agent="codex"` and `event_name="skill_activated"`
 
 ## 🔍 Usage Analysis
 
@@ -182,6 +193,11 @@ The Grafana dashboard is organized into sections reflecting the observability do
 ### 🔍 Event Logs
 - Real-time tool execution events and API errors
 - Structured log analysis for troubleshooting
+
+### Codex Observability
+- Codex token consumption from local session files
+- Primary and weekly rate-limit usage
+- Codex skill activation counts and raw skill event logs
 
 ## 🔧 Advanced Configuration
 

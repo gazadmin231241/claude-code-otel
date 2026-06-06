@@ -53,6 +53,7 @@ services:
       - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - ./claude-code-dashboard.json:/var/lib/grafana/dashboards/claude-code-dashboard.json:ro
       - ./skill-usage-dashboard.json:/var/lib/grafana/dashboards/skill-usage-dashboard.json:ro
+      - ./codex-observability-dashboard.json:/var/lib/grafana/dashboards/codex-observability-dashboard.json:ro
     ports:
       - "13737:3000"
     restart: unless-stopped
@@ -67,15 +68,23 @@ services:
     environment:
       LOKI_PUSH_ENDPOINT: "http://loki:3100/loki/api/v1/push"
       CODEX_HISTORY_PATH: "/codex/history.jsonl"
+      CODEX_SESSIONS_PATH: "/codex/sessions"
+      CODEX_ARCHIVED_SESSIONS_PATH: "/codex/archived_sessions"
+      CODEX_METRICS_PORT: "9464"
+      CODEX_METRICS_REFRESH_MS: "30000"
       CLAUDE_PROJECTS_PATH: "/claude/projects"
       CODEX_BRIDGE_STATE_PATH: "/data/codex-skill-bridge-state.json"
       CODEX_BRIDGE_POLL_INTERVAL_MS: "5000"
       CODEX_BRIDGE_HISTORY_WINDOW_DAYS: "30"
     volumes:
       - ./scripts/codex-skill-bridge.mjs:/app/codex-skill-bridge.mjs:ro
+      - ./scripts/codex-observability.mjs:/app/codex-observability.mjs:ro
       - /home/admin/.codex/history.jsonl:/codex/history.jsonl:ro
+      - /home/admin/.codex/sessions:/codex/sessions:ro
       - /home/admin/.claude/projects:/claude/projects:ro
       - ./data:/data
+    ports:
+      - "9464:9464"
     restart: unless-stopped
     depends_on: [loki]
     networks:

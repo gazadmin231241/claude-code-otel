@@ -4,4 +4,8 @@ global:
 scrape_configs:
   - job_name: 'otel-collector'
     static_configs:
-      - targets: ['otel-collector:8889'] 
+      - targets: ['otel-collector:8889']
+
+  - job_name: 'codex-skill-bridge'
+    static_configs:
+      - targets: ['codex-skill-bridge:9464']

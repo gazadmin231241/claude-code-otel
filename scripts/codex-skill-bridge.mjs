@@ -1,14 +1,29 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import path from "node:path"
+import { createServer } from "node:http"
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
+
+import {
+  jsonlFiles,
+  normalizeSkillName,
+  parseCodexSessionChunk,
+  readCodexSessionMetrics,
+  renderPrometheusMetrics,
+  skillNamesFromText,
+} from "./codex-observability.mjs"
 
 const historyPath = process.env.CODEX_HISTORY_PATH || "/home/admin/.codex/history.jsonl"
+const sessionsPath = process.env.CODEX_SESSIONS_PATH || "/home/admin/.codex/sessions"
+const archivedSessionsPath = process.env.CODEX_ARCHIVED_SESSIONS_PATH || "/home/admin/.codex/archived_sessions"
 const claudeProjectsPath = process.env.CLAUDE_PROJECTS_PATH || "/home/admin/.claude/projects"
 const statePath = process.env.CODEX_BRIDGE_STATE_PATH || "/tmp/codex-skill-bridge-state.json"
 const endpoint = process.env.LOKI_PUSH_ENDPOINT || "http://127.0.0.1:3100/loki/api/v1/push"
 const pollIntervalMs = Number(process.env.CODEX_BRIDGE_POLL_INTERVAL_MS || 5000)
+const metricsPort = Number(process.env.CODEX_METRICS_PORT || 9464)
+const metricsRefreshMs = Number(process.env.CODEX_METRICS_REFRESH_MS || 30000)
 const historyWindowDays = Number(process.env.CODEX_BRIDGE_HISTORY_WINDOW_DAYS || 30)
 const batchSize = 1000
+let metricsText = "# HELP codex_bridge_metrics_ready Whether Codex bridge metrics have been collected.\n# TYPE codex_bridge_metrics_ready gauge\ncodex_bridge_metrics_ready 0\n"
+let nextMetricsRefreshMs = 0
 
 function readState() {
   try {
@@ -22,76 +37,6 @@ function readState() {
 
 function writeState(nextState) {
   writeFileSync(statePath, JSON.stringify(nextState, null, 2))
-}
-
-function normalizeSkillName(name) {
-  return String(name || "")
-    .trim()
-    .replace(/^\$/, "")
-    .replace(/\/SKILL\.md$/i, "")
-    .split("/")
-    .filter(Boolean)
-    .pop()
-}
-
-/**
- * Skill names that look like shell/NGINX/template variables but are real skills.
- * Kept short — only names that appear as $name in Codex transcripts without
- * a SKILL.md link and are confirmed real skill invocations.
- */
-const KNOWN_SKILL_NAMES = new Set([
-  "create-plan", "development-flow-run", "skill-creator", "skill-installer",
-  "grace-execute", "personal-message-style", "task-pipeline-review",
-  "commit", "review", "verify", "simplify", "run", "init", "loop",
-  "deep-research", "claude-api", "code-review", "security-review",
-  "fewer-permission-prompts", "update-config", "keybindings-help", "omarchy",
-])
-
-/**
- * Heuristic: reject $-prefixed tokens that are clearly NOT skill names.
- * Skill names are lowercase, hyphenated, and don't contain path separators,
- * shell special chars, or common variable patterns.
- */
-function looksLikeSkillName(name) {
-  if (!name) return false
-  // Already stripped the leading $ by this point
-  // Reject if it looks like a shell/NGINX/template variable
-  if (/[/{}\\$]/.test(name)) return false          // path chars or nested vars
-  if (/[A-Z]{2,}/.test(name)) return false          // ALLCAPS like ENV, NF, PID
-  if (/^\d+$/.test(name)) return false              // pure number like $1, $2
-  if (/^[A-Z]$/) return false   // single uppercase like $N
-  if (name.length > 60) return false                // unreasonably long
-  // Must contain at least one letter
-  if (!/[a-z]/i.test(name)) return false
-  // If it's in the known list, always accept
-  if (KNOWN_SKILL_NAMES.has(name)) return true
-  // Otherwise, require lowercase + hyphens/underscores/colons pattern (typical skill names)
-  // Colons appear in namespaced skills like "superpowers:executing-plans"
-  return /^[a-z][a-z0-9:_-]*$/.test(name)
-}
-
-function skillNamesFromText(text) {
-  if (!text || typeof text !== "string") return []
-
-  const names = new Set()
-  // Pattern 1: Markdown links to SKILL.md — [$name](path/SKILL.md)
-  for (const match of text.matchAll(/\[\$?([^\]\s()]+)\]\(([^)]*\/SKILL\.md)\)/g)) {
-    names.add(normalizeSkillName(match[1] || match[2]))
-  }
-  // Pattern 2: "Using `skill-name`" / "Использую `skill-name`" text markers
-  for (const match of text.matchAll(/(?:Using|Использую)\s+`([^`]+)`/g)) {
-    names.add(normalizeSkillName(match[1]))
-  }
-  // Pattern 3: Standalone $skill-name invocations (no SKILL.md link)
-  // These appear in Codex transcripts as "$skill-name" without a surrounding
-  // markdown link — e.g. "$review", "$create-plan", "$commit".
-  for (const match of text.matchAll(/\$([a-zA-Z][a-zA-Z0-9:_-]+)/g)) {
-    const candidate = match[1].toLowerCase()
-    if (looksLikeSkillName(candidate)) {
-      names.add(normalizeSkillName(candidate))
-    }
-  }
-  return Array.from(names).filter(Boolean)
 }
 
 function parseCodexRecords(chunk) {
@@ -117,6 +62,19 @@ function parseCodexRecords(chunk) {
     }
   }
   return records
+}
+
+function parseCodexSessionRecords(chunk, file) {
+  const oldestAcceptedMs = Date.now() - historyWindowDays * 24 * 60 * 60 * 1000
+  return parseCodexSessionChunk(chunk, file).skillEvents
+    .filter((event) => event.timestampMs >= oldestAcceptedMs)
+    .map((event) => ({
+      agent: event.agent,
+      eventName: event.eventName,
+      sessionId: event.sessionId,
+      skillName: event.skillName,
+      timeUnixNano: String(event.timestampMs * 1e6),
+    }))
 }
 
 function parseClaudeRecords(chunk) {
@@ -179,18 +137,6 @@ function parseClaudeRecords(chunk) {
   return records
 }
 
-function jsonlFiles(root) {
-  if (!existsSync(root)) return []
-  const entries = readdirSync(root, { withFileTypes: true })
-  const files = []
-  for (const entry of entries) {
-    const fullPath = path.join(root, entry.name)
-    if (entry.isDirectory()) files.push(...jsonlFiles(fullPath))
-    if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(fullPath)
-  }
-  return files
-}
-
 async function exportRecords(records) {
   const sortedRecords = records.toSorted((left, right) => Number(left.timeUnixNano) - Number(right.timeUnixNano))
   for (let index = 0; index < sortedRecords.length; index += batchSize) {
@@ -229,12 +175,43 @@ function streamsFor(records) {
   return Array.from(streams.values())
 }
 
+function codexSessionFiles() {
+  return [...jsonlFiles(sessionsPath), ...jsonlFiles(archivedSessionsPath)]
+}
+
+function refreshMetricsIfNeeded(force = false) {
+  const now = Date.now()
+  if (!force && now < nextMetricsRefreshMs) return
+  const files = codexSessionFiles()
+  metricsText = renderPrometheusMetrics(readCodexSessionMetrics(files))
+  nextMetricsRefreshMs = now + metricsRefreshMs
+}
+
+function startMetricsServer() {
+  createServer((request, response) => {
+    if (request.url !== "/metrics") {
+      response.writeHead(404)
+      response.end("not found\n")
+      return
+    }
+    refreshMetricsIfNeeded()
+    response.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" })
+    response.end(metricsText)
+  }).listen(metricsPort, "0.0.0.0", () => {
+    console.log(`serving Codex metrics on :${metricsPort}/metrics`)
+  })
+}
+
 async function pollOnce() {
   const state = readState()
   const nextSources = { ...state.sources }
+  refreshMetricsIfNeeded()
   const records = [
     ...readSourceRecords(`codex:${historyPath}`, historyPath, nextSources, parseCodexRecords),
   ]
+  for (const file of codexSessionFiles()) {
+    records.push(...readSourceRecords(`codex-session:${file}`, file, nextSources, parseCodexSessionRecords))
+  }
   for (const file of jsonlFiles(claudeProjectsPath)) {
     records.push(...readSourceRecords(`claude:${file}`, file, nextSources, parseClaudeRecords))
   }
@@ -260,7 +237,7 @@ function readSourceRecords(sourceKey, file, sources, parse) {
   const completeLength = completeJsonlLength(nextChunk)
   if (!completeLength) return []
 
-  const records = parse(nextChunk.slice(0, completeLength))
+  const records = parse(nextChunk.slice(0, completeLength), file)
   sources[sourceKey] = { inode: ino, offset: offset + completeLength }
   return records
 }
@@ -272,7 +249,9 @@ function completeJsonlLength(chunk) {
 }
 
 async function main() {
-  console.log(`watching ${historyPath} and ${claudeProjectsPath}`)
+  refreshMetricsIfNeeded(true)
+  startMetricsServer()
+  console.log(`watching ${historyPath}, ${sessionsPath}, ${archivedSessionsPath}, and ${claudeProjectsPath}`)
   for (;;) {
     try {
       await pollOnce()
